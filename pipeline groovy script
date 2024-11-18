@@ -1,0 +1,70 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17' // Specifies the JDK version to be used in the pipeline.
+        maven 'maven' // Specifies Maven as a build tool.
+    }
+    environment {
+        SCANNER_HOME = tool 'sonarqube' // Sets up the SonarQube scanner tool environment variable.
+    }
+
+    stages {
+        stage('Gitcheckout') { // Stage to pull the latest code from the GitHub repository.
+            steps {
+                git branch: 'main', credentialsId: 'Github', url: 'https://github.com/gowthammuru/Ekart.git' 
+                // Clones the main branch of the repository using the provided credentials.
+            }
+        }
+        stage('mvn compile') { // Stage to compile the source code using Maven.
+            steps {
+                sh "mvn clean compile -DskipTests=true" 
+                // Cleans and compiles the code, skipping the tests.
+            }
+        }
+        stage('sonarqube-scan') { // Stage to perform static code analysis using SonarQube.
+            steps {
+                withSonarQubeEnv('sonarqube') { 
+                    // Injects SonarQube environment variables configured in Jenkins.
+                    sh '''${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=ekart \
+                           -Dsonar.projectName=ekart \
+                           -Dsonar.projectVersion=1.0 \
+                           -Dsonar.sources=. \
+                           -Dsonar.java.binaries=target/classes'''
+                    // Runs the SonarQube scanner with project-specific configurations.
+                }
+            }
+        }
+        stage('mvn package') { // Stage to package the compiled code into a distributable format.
+            steps {
+                sh "mvn clean package -DskipTests=true" 
+                // Packages the application, skipping tests.
+            }
+        }
+        stage('Docker Build and Push') { // Stage to build a Docker image and push it to DockerHub.
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'Dockerhub') {
+                        // Authenticates to DockerHub using Jenkins credentials.
+                        sh "docker build -t shopping-cart -f docker/Dockerfile ."
+                        // Builds a Docker image with the tag "shopping-cart".
+                        sh "docker tag shopping-cart gowthamravic/shopping-cart:latest"
+                        // Tags the image with the DockerHub repository and tag "latest".
+                        sh "docker push gowthamravic/shopping-cart:latest"
+                        // Pushes the Docker image to the DockerHub repository.
+                    }
+                }
+            }
+        }
+        stage('Deploy') { // Stage to deploy the application using the Docker image.
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'Dockerhub') {
+                        // Authenticates to DockerHub using Jenkins credentials.
+                        sh "docker run -d --name shop -p 8070:8070 gowthamravic/shopping-cart:latest"
+                        // Runs the Docker container with the specified name and port mapping.
+                    }
+                }
+            }
+        }
+    }
+}
